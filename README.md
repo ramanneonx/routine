@@ -39,10 +39,10 @@ The project follows the current Android best practices with a clean, decoupled a
 
 ## 🚀 Getting Started
 
-1. Clone the repository: `git clone https://github.com/yourusername/neonroutine.git`
+1. Clone the repository: `git clone https://github.com/ramanneon/neonroutine.git`
 2. Open in **Android Studio (Ladybug or newer)**.
 3. Sync Project with Gradle Files.
 4. Run on an Android device (API 26+).
 
 ## 📄 License
-MIT License. Created by [Your Name] for the modern Android ecosystem.
+MIT License. Created by raman-neon for the modern Android ecosystem.
