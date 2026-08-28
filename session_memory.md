@@ -230,8 +230,13 @@
 - **Deliverable:**
   1. **Clean Production .gitignore**: Configured ignore rules to prevent secrets, keystores, local properties, and build artifacts from leaking to GitHub.
   2. **High-Res Showcase & Documentation (`README.md`, `images/`)**: Added UI screenshot gallery showcasing Home, Month Heatmap, Analytics & Streaks, Settings & Full Backup, and Face Stencil Camera.
-  3. **Repository Synced & Pushed**: Successfully committed and pushed all source updates, utilities, resources, and documentation to `https://github.com/ramaneon/routine` on branch `main`.
-  4. **Release APK Artifact**: `NeonRoutine-release.apk` is generated and ready to attach under GitHub Releases for direct public download.
+### Turn 40: 2026-08-28
+- **User Prompt:** "bro i mean also on reo theri is a relesase section where i provide drive link someting remove that and this apk to that... bro do yoursefl through git and github dektop alreadhy done login tyep you many time do this stuff"
+- **Deliverable:**
+  1. **Purged Outdated Drive Releases via GitHub API**: Deleted old releases `303496969` (which contained the Google Drive link) and `303495868`.
+  2. **Published Official GitHub Release (`v1.0.0`)**: Created official production release `NeonRoutine v1.0.0 - Production 144Hz Release` set as `latest`.
+  3. **Direct Binary Asset Upload**: Uploaded standalone `NeonRoutine-release.apk` (16.3 MB) directly to the release asset bucket (`https://github.com/ramaneon/routine/releases/download/v1.0.0/NeonRoutine-release.apk`).
+  4. **Clean Public Access**: Anyone visiting `https://github.com/ramaneon/routine/releases` now sees only the clean release with 1-click direct APK download.
 
 
 
