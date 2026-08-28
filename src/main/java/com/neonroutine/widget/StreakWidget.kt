@@ -35,6 +35,7 @@ import com.neonroutine.data.db.AppDatabase
 import com.neonroutine.data.model.CompletionState
 import com.neonroutine.data.model.Recurrence
 import com.neonroutine.data.model.Task
+import com.neonroutine.data.prefs.AppPreferences
 import kotlinx.serialization.json.Json
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -91,14 +92,15 @@ class StreakWidget : GlanceAppWidget() {
 
         val nextLevelPts = level * 100
         val progress = if (nextLevelPts > 0) (totalPts % 100).coerceIn(0, 100) else 0
+        val widgetTitle = AppPreferences.readWidgetTitle(context)
 
         provideContent {
             GlanceTheme {
                 val size = androidx.glance.LocalSize.current
                 when {
                     size.width < 120.dp -> TinyLayout(streak)
-                    size.height < 120.dp -> SmallLayout(streak, level, totalPts)
-                    else -> MediumLayout(streak, level, totalPts, progress)
+                    size.height < 120.dp -> SmallLayout(streak, level, totalPts, widgetTitle)
+                    else -> MediumLayout(streak, level, totalPts, progress, widgetTitle)
                 }
             }
         }
@@ -123,7 +125,7 @@ class StreakWidget : GlanceAppWidget() {
     }
 
     @Composable
-    private fun SmallLayout(streak: Int, level: Int, points: Int) {
+    private fun SmallLayout(streak: Int, level: Int, points: Int, widgetTitle: String = AppPreferences.DEFAULT_WIDGET_TITLE) {
         Row(
             modifier = GlanceModifier.fillMaxSize()
                 .background(Color(0xFF0D0D0D)).cornerRadius(16.dp)
@@ -163,7 +165,7 @@ class StreakWidget : GlanceAppWidget() {
     }
 
     @Composable
-    private fun MediumLayout(streak: Int, level: Int, points: Int, progressPct: Int) {
+    private fun MediumLayout(streak: Int, level: Int, points: Int, progressPct: Int, widgetTitle: String = AppPreferences.DEFAULT_WIDGET_TITLE) {
         Column(
             modifier = GlanceModifier.fillMaxSize()
                 .background(Color(0xFF0D0D0D)).cornerRadius(16.dp)
@@ -171,7 +173,7 @@ class StreakWidget : GlanceAppWidget() {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(modifier = GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("🔥 Streak", style = TextStyle(
+                Text(widgetTitle, style = TextStyle(
                     color = androidx.glance.unit.ColorProvider(Color.White),
                     fontSize = 13.sp, fontWeight = FontWeight.Bold
                 ), modifier = GlanceModifier.defaultWeight())

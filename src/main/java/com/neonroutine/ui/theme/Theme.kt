@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import android.graphics.RenderEffect
@@ -146,27 +147,46 @@ private fun brutalMinimalScheme(primary: Color, surface: Color, bg: Color, dark:
     }
 }
 
-private fun glassmorphismScheme(primary: Color, surface: Color, bg: Color) =
-    darkColorScheme(
-        primary              = primary,
-        onPrimary            = Color.White,
-        primaryContainer     = primary.copy(alpha = 0.25f),
-        onPrimaryContainer   = Color.White,
-        secondary            = primary.copy(alpha = 0.8f),
-        background           = bg,
-        onBackground         = Color.White,
-        surface              = surface.copy(alpha = 0.15f), // Translucent surface base
-        onSurface            = Color.White,
-        surfaceVariant       = surface.copy(alpha = 0.25f),
-        onSurfaceVariant     = Color.White.copy(alpha = 0.7f),
-        outline              = Color.White.copy(alpha = 0.15f), // iOS-style thin border
-        error                = Color(0xFFCF6679)
-    )
+private fun glassmorphismScheme(primary: Color, surface: Color, bg: Color, isDark: Boolean) =
+    if (isDark) {
+        darkColorScheme(
+            primary              = primary,
+            onPrimary            = Color.White,
+            primaryContainer     = primary.copy(alpha = 0.25f),
+            onPrimaryContainer   = Color.White,
+            secondary            = primary.copy(alpha = 0.8f),
+            onSecondary          = Color.White,
+            background           = bg,
+            onBackground         = Color.White,
+            surface              = surface.copy(alpha = 0.20f),
+            onSurface            = Color.White,
+            surfaceVariant       = surface.copy(alpha = 0.30f),
+            onSurfaceVariant     = Color.White.copy(alpha = 0.75f),
+            outline              = Color.White.copy(alpha = 0.18f),
+            error                = Color(0xFFCF6679)
+        )
+    } else {
+        lightColorScheme(
+            primary              = primary,
+            onPrimary            = Color.White,
+            primaryContainer     = primary.copy(alpha = 0.15f),
+            onPrimaryContainer   = primary,
+            secondary            = primary.copy(alpha = 0.75f),
+            onSecondary          = Color.White,
+            background           = bg,
+            onBackground         = Color(0xFF0F172A),
+            surface              = Color.White.copy(alpha = 0.75f),
+            onSurface            = Color(0xFF0F172A),
+            surfaceVariant       = Color(0xFFE2E8F0).copy(alpha = 0.80f),
+            onSurfaceVariant     = Color(0xFF334155),
+            outline              = primary.copy(alpha = 0.25f),
+            error                = Color(0xFFBA1A1A)
+        )
+    }
 
 /**
  * iPhone-style glass panel — hardware-accelerated, premium look.
- * Uses real backdrop blur on Android 12+ (API 31+) while maintaining 120FPS performance
- * using specialized GraphicsLayer compositions.
+ * Adapts dynamically to light Aero Glass and dark Frosted glass for maximum contrast.
  */
 @Composable
 fun Modifier.glassPanel(
@@ -176,36 +196,53 @@ fun Modifier.glassPanel(
 ): Modifier {
     if (!enabled) return this
 
-    // 1. Frosted Filler: High-contrast semi-transparent white/surface mix
-    // This fixes the text legibility issue by providing a solid "scrim" backdrop
-    val frostedBrush = remember(color) {
-        Brush.verticalGradient(
-            listOf(
-                color.copy(alpha = 0.35f), // Top slightly more opaque for light catching
-                color.copy(alpha = 0.25f)
+    val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+
+    // Frosted scrim backdrop tailored for light or dark glass
+    val frostedBrush = remember(color, isDark) {
+        if (isDark) {
+            Brush.verticalGradient(
+                listOf(
+                    color.copy(alpha = 0.40f),
+                    color.copy(alpha = 0.25f)
+                )
             )
-        )
+        } else {
+            Brush.verticalGradient(
+                listOf(
+                    Color.White.copy(alpha = 0.90f),
+                    Color.White.copy(alpha = 0.75f)
+                )
+            )
+        }
     }
 
-    // 2. Specular Highlight: A sub-pixel white border that catches light at the top-left
-    val lightBorderBrush = remember {
-        Brush.linearGradient(
-            0.0f to Color.White.copy(alpha = 0.30f), // Bright highlight
-            0.5f to Color.White.copy(alpha = 0.10f),
-            1.0f to Color.White.copy(alpha = 0.05f)
-        )
+    // Specular Highlight border
+    val lightBorderBrush = remember(isDark) {
+        if (isDark) {
+            Brush.linearGradient(
+                0.0f to Color.White.copy(alpha = 0.35f),
+                0.5f to Color.White.copy(alpha = 0.12f),
+                1.0f to Color.White.copy(alpha = 0.05f)
+            )
+        } else {
+            Brush.linearGradient(
+                0.0f to Color.White.copy(alpha = 0.95f),
+                0.5f to Color(0xFF0077B6).copy(alpha = 0.30f),
+                1.0f to Color(0xFF0077B6).copy(alpha = 0.15f)
+            )
+        }
     }
 
     return this
         .graphicsLayer {
-            // Shadow for depth, but NO Blur on the content layer!
-            shadowElevation = 15f
+            shadowElevation = if (isDark) 12f else 6f
             clip = true
         }
         .clip(shape)
         .background(frostedBrush)
         .border(
-            width = 0.6.dp,
+            width = if (isDark) 0.6.dp else 1.dp,
             brush = lightBorderBrush,
             shape = shape
         )
@@ -231,7 +268,6 @@ fun Modifier.glassHover(
     return this.graphicsLayer {
         scaleX = scale
         scaleY = scale
-        // Hardware layer means GPU handles the scale transform with zero CPU cost
     }
 }
 
@@ -253,7 +289,7 @@ fun TimetableTheme(
         DesignStyle.NEON_GLOW    -> neonGlowScheme(primary, surface, background)
         DesignStyle.SOFT_PASTEL  -> softPastelScheme(primary, surface, background)
         DesignStyle.BRUTAL_MINIMAL -> brutalMinimalScheme(primary, surface, background, themePreset.isDark)
-        DesignStyle.GLASSMORPHISM -> glassmorphismScheme(primary, surface, background)
+        DesignStyle.GLASSMORPHISM -> glassmorphismScheme(primary, surface, background, themePreset.isDark)
     }
 
     val shapes = when (themePreset.designStyle) {

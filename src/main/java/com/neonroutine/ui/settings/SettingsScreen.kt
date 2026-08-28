@@ -85,6 +85,10 @@ import com.neonroutine.ui.theme.glassHover
 import com.neonroutine.ui.theme.glassPanel
 import com.neonroutine.ui.viewmodel.TaskViewModel
 import kotlinx.coroutines.launch
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Widgets
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TopAppBar
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -98,9 +102,14 @@ fun SettingsScreen(
     var showClearDialog by remember { mutableStateOf(false) }
     // Use app-wide singleton so changes are reflected immediately in the theme
     val themePrefs = remember { (context.applicationContext as NeonRoutineApp).themePreferences }
+    val appPrefs = remember { (context.applicationContext as NeonRoutineApp).appPreferences }
     val themePreset by themePrefs.themePreset.collectAsState()
+    val widgetTitle by appPrefs.widgetTitle.collectAsState()
+    val widgetSubtitle by appPrefs.widgetSubtitle.collectAsState()
+    val homeGreeting by appPrefs.homeGreeting.collectAsState()
+    val motivationQuote by appPrefs.motivationQuote.collectAsState()
     
-    // File picker for import
+    // File picker for Quick JSON import
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -117,21 +126,38 @@ fun SettingsScreen(
         }
     }
 
+    var isBackingUp by remember { mutableStateOf(false) }
+    var isRestoring by remember { mutableStateOf(false) }
+
+    // File picker for Full Archive (.neonbak / .zip) restore
+    val fullRestoreLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            isRestoring = true
+            scope.launch {
+                val result = com.neonroutine.util.BackupRestoreUtil.restoreFullBackupArchive(context, uri, viewModel)
+                isRestoring = false
+                result.onSuccess { msg ->
+                    Toast.makeText(context, "🎉 $msg", Toast.LENGTH_LONG).show()
+                }.onFailure { err ->
+                    Toast.makeText(context, "❌ Restore failed: ${err.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { 
-                    Text(
-                        "Settings", 
-                        color = if (themePreset.designStyle == com.neonroutine.ui.theme.DesignStyle.GLASSMORPHISM) Color.White else Color.Unspecified
-                    ) 
+                    Text("Settings") 
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack, 
-                            contentDescription = "Back",
-                            tint = if (themePreset.designStyle == com.neonroutine.ui.theme.DesignStyle.GLASSMORPHISM) Color.White else MaterialTheme.colorScheme.onSurface
+                            contentDescription = "Back"
                         )
                     }
                 }
@@ -219,20 +245,22 @@ fun SettingsScreen(
                 title = "Design Themes",
                 subtitle = "Choose a complete design language — shapes, fonts & colors all change"
             ) {
-                val designGroups = listOf(
-                    "🌌 Neon Glow" to com.neonroutine.ui.theme.ThemePreset.entries.filter {
-                        it.designStyle == com.neonroutine.ui.theme.DesignStyle.NEON_GLOW
-                    },
-                    "🌸 Soft Pastel" to com.neonroutine.ui.theme.ThemePreset.entries.filter {
-                        it.designStyle == com.neonroutine.ui.theme.DesignStyle.SOFT_PASTEL
-                    },
-                    "⬛ Brutal Minimal" to com.neonroutine.ui.theme.ThemePreset.entries.filter {
-                        it.designStyle == com.neonroutine.ui.theme.DesignStyle.BRUTAL_MINIMAL
-                    },
-                    "💎 Glass Visuals" to com.neonroutine.ui.theme.ThemePreset.entries.filter {
-                        it.designStyle == com.neonroutine.ui.theme.DesignStyle.GLASSMORPHISM
-                    }
-                )
+                val designGroups = remember {
+                    listOf(
+                        "🌌 Neon Glow" to com.neonroutine.ui.theme.ThemePreset.entries.filter {
+                            it.designStyle == com.neonroutine.ui.theme.DesignStyle.NEON_GLOW
+                        },
+                        "🌸 Soft Pastel" to com.neonroutine.ui.theme.ThemePreset.entries.filter {
+                            it.designStyle == com.neonroutine.ui.theme.DesignStyle.SOFT_PASTEL
+                        },
+                        "⬛ Brutal Minimal" to com.neonroutine.ui.theme.ThemePreset.entries.filter {
+                            it.designStyle == com.neonroutine.ui.theme.DesignStyle.BRUTAL_MINIMAL
+                        },
+                        "💎 Glass Visuals" to com.neonroutine.ui.theme.ThemePreset.entries.filter {
+                            it.designStyle == com.neonroutine.ui.theme.DesignStyle.GLASSMORPHISM
+                        }
+                    )
+                }
 
                 Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
                     designGroups.forEach { (groupName, presets) ->
@@ -241,17 +269,21 @@ fun SettingsScreen(
                                 groupName,
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Bold,
-                                color = if (themePreset.designStyle == com.neonroutine.ui.theme.DesignStyle.GLASSMORPHISM) Color.White else MaterialTheme.colorScheme.primary,
+                                color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.padding(bottom = 4.dp)
                             )
                             presets.forEach { preset ->
                                 val isSelected = themePreset == preset
-                                val primaryColor = try { Color(android.graphics.Color.parseColor(preset.primaryHex)) } catch(e:Exception){ Color.Gray }
-                                val bgColor = try { Color(android.graphics.Color.parseColor(preset.backgroundHex)) } catch(e:Exception){ Color.Black }
-                                val surfaceColor = try { Color(android.graphics.Color.parseColor(preset.surfaceHex)) } catch(e:Exception){ Color.DarkGray }
+                                val primaryColor = remember(preset.primaryHex) {
+                                    try { Color(android.graphics.Color.parseColor(preset.primaryHex)) } catch(e:Exception){ Color.Gray }
+                                }
+                                val bgColor = remember(preset.backgroundHex) {
+                                    try { Color(android.graphics.Color.parseColor(preset.backgroundHex)) } catch(e:Exception){ Color.Black }
+                                }
+                                val surfaceColor = remember(preset.surfaceHex) {
+                                    try { Color(android.graphics.Color.parseColor(preset.surfaceHex)) } catch(e:Exception){ Color.DarkGray }
+                                }
 
-                                // Mini preview card showing the actual design style
-                                val itemInteractionSource = remember { MutableInteractionSource() }
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -274,10 +306,7 @@ fun SettingsScreen(
                                                 Modifier.border(1.dp, primaryColor.copy(alpha=0.6f), RoundedCornerShape(0.dp))
                                             else Modifier
                                         )
-                                        .clickable(
-                                            interactionSource = itemInteractionSource,
-                                            indication = LocalIndication.current
-                                        ) { themePrefs.setThemePreset(preset) }
+                                        .clickable { themePrefs.setThemePreset(preset) }
                                         .padding(12.dp)
                                 ) {
                                     Row(
@@ -346,6 +375,85 @@ fun SettingsScreen(
                 }
             }
 
+            // ── Home Screen & Widget Customization ──────────────────────────────
+            SectionHeader("Home Screen & Widgets")
+
+            SettingCard(
+                icon = Icons.Filled.Widgets,
+                title = "Widget Text",
+                subtitle = "Customize the header text shown on your home screen widgets"
+            ) {
+                var editingWidgetTitle by remember { mutableStateOf(widgetTitle) }
+                var editingWidgetSubtitle by remember { mutableStateOf(widgetSubtitle) }
+
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = editingWidgetTitle,
+                        onValueChange = {
+                            editingWidgetTitle = it
+                            appPrefs.setWidgetTitle(it)
+                            com.neonroutine.widget.WidgetUpdater.updateAllWidgetsAsync(context)
+                        },
+                        label = { Text("Widget Header Title") },
+                        placeholder = { Text("e.g. ⚡ My Habits") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Filled.Edit, null) }
+                    )
+
+                    OutlinedTextField(
+                        value = editingWidgetSubtitle,
+                        onValueChange = {
+                            editingWidgetSubtitle = it
+                            appPrefs.setWidgetSubtitle(it)
+                            com.neonroutine.widget.WidgetUpdater.updateAllWidgetsAsync(context)
+                        },
+                        label = { Text("Widget Subtitle") },
+                        placeholder = { Text("e.g. Today's Habits") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Filled.Edit, null) }
+                    )
+                }
+            }
+
+            SettingCard(
+                icon = Icons.Filled.Home,
+                title = "Home Greeting & Motivation",
+                subtitle = "Personalize the greeting and quote shown on the Home tab"
+            ) {
+                var editingGreeting by remember { mutableStateOf(homeGreeting) }
+                var editingQuote by remember { mutableStateOf(motivationQuote) }
+
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = editingGreeting,
+                        onValueChange = {
+                            editingGreeting = it
+                            appPrefs.setHomeGreeting(it)
+                        },
+                        label = { Text("Home Greeting Text") },
+                        placeholder = { Text("e.g. Let's crush it today! 🔥") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Filled.Edit, null) }
+                    )
+
+                    OutlinedTextField(
+                        value = editingQuote,
+                        onValueChange = {
+                            editingQuote = it
+                            appPrefs.setMotivationQuote(it)
+                        },
+                        label = { Text("Motivation Quote") },
+                        placeholder = { Text("e.g. Small steps every day.") },
+                        modifier = Modifier.fillMaxWidth(),
+                        maxLines = 2,
+                        leadingIcon = { Icon(Icons.Filled.Edit, null) }
+                    )
+                }
+            }
+
             // Notifications section
             SectionHeader("Notifications")
 
@@ -411,9 +519,67 @@ fun SettingsScreen(
             }
 
             // Data section
-            SectionHeader("Data")
+            SectionHeader("Backup & Data Management")
 
-            // Export
+            // Complete Full Backup (.neonbak / .zip with all tasks + memories & photos)
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !isBackingUp) {
+                        isBackingUp = true
+                        scope.launch {
+                            try {
+                                val backupFile = com.neonroutine.util.BackupRestoreUtil.createFullBackupArchive(context, viewModel)
+                                isBackingUp = false
+                                com.neonroutine.util.BackupRestoreUtil.shareBackupFile(context, backupFile)
+                            } catch (e: Exception) {
+                                isBackingUp = false
+                                Toast.makeText(context, "Backup failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))
+            ) {
+                Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("📦", style = MaterialTheme.typography.titleLarge)
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Create Complete Backup (.neonbak)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Text("Bundles all habits, statistics, notes, and photos into a single shareable backup archive",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (isBackingUp) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    }
+                }
+            }
+
+            // Restore Complete Backup (.neonbak / .zip)
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !isRestoring) {
+                        fullRestoreLauncher.launch("*/*")
+                    },
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f))
+            ) {
+                Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("📥", style = MaterialTheme.typography.titleLarge)
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Restore Complete Backup", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Text("Select a .neonbak / .zip file to restore tasks, history, and all memory photos",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (isRestoring) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    }
+                }
+            }
+
+            // Quick JSON Export
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -424,23 +590,23 @@ fun SettingsScreen(
                                 type = "application/json"
                                 putExtra(Intent.EXTRA_TEXT, jsonData)
                             }
-                            context.startActivity(Intent.createChooser(intent, "Export Data"))
+                            context.startActivity(Intent.createChooser(intent, "Export Data (JSON)"))
                         }
                     },
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Settings, null, tint = MaterialTheme.colorScheme.primary)
+                    Text("📄", style = MaterialTheme.typography.titleLarge)
                     Spacer(Modifier.width(12.dp))
                     Column {
-                        Text("Export Data", style = MaterialTheme.typography.titleSmall)
-                        Text("Save all tasks and entries as JSON", style = MaterialTheme.typography.bodySmall,
+                        Text("Quick Export (JSON Text Only)", style = MaterialTheme.typography.titleSmall)
+                        Text("Save habit definitions and history as lightweight JSON text", style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
 
-            // Import
+            // Quick JSON Import
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -448,11 +614,11 @@ fun SettingsScreen(
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Settings, null, tint = MaterialTheme.colorScheme.secondary)
+                    Text("📋", style = MaterialTheme.typography.titleLarge)
                     Spacer(Modifier.width(12.dp))
                     Column {
-                        Text("Import Data", style = MaterialTheme.typography.titleSmall)
-                        Text("Restore from a JSON backup file", style = MaterialTheme.typography.bodySmall,
+                        Text("Quick Import (JSON Text Only)", style = MaterialTheme.typography.titleSmall)
+                        Text("Restore from a JSON text backup file", style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -472,7 +638,7 @@ fun SettingsScreen(
                     Column {
                         Text("Clear All Data", style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onErrorContainer)
-                        Text("This cannot be undone", style = MaterialTheme.typography.bodySmall,
+                        Text("Permanently resets all tasks, history, and data", style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f))
                     }
                 }
@@ -486,7 +652,7 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("NeonRoutine", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("Version 2.0", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Version 2.2", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(4.dp))
                     Text("Modern Gamified Habit Tracking System", style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -549,12 +715,11 @@ fun SettingsScreen(
 
 @Composable
 fun SectionHeader(title: String) {
-    val designStyle = LocalDesignStyle.current
     Text(
         title,
         style = MaterialTheme.typography.titleSmall,
         fontWeight = FontWeight.SemiBold,
-        color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White else MaterialTheme.colorScheme.primary,
+        color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(top = 8.dp)
     )
 }
@@ -585,7 +750,7 @@ fun SettingCard(
                 Icon(
                     icon, 
                     null, 
-                    tint = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White else MaterialTheme.colorScheme.primary, 
+                    tint = MaterialTheme.colorScheme.primary, 
                     modifier = Modifier.size(24.dp)
                 )
                 Spacer(Modifier.width(12.dp))
@@ -593,12 +758,12 @@ fun SettingCard(
                     Text(
                         title, 
                         style = MaterialTheme.typography.titleSmall,
-                        color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White else Color.Unspecified
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
                         subtitle, 
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White.copy(alpha=0.6f) else MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }

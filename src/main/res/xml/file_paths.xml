@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Internal permanent memory photos (neon_memories folder in filesDir) -->
+    <files-path name="internal_memories" path="neon_memories/" />
+    <!-- Internal storage root (covers any internal subpath) -->
+    <files-path name="internal_images" path="." />
+    <!-- Cache dir: exported timelapse MP4s live here -->
+    <cache-path name="cached_exports" path="exports/" />
+    <cache-path name="cached_images" path="." />
+    <!-- External files (legacy — kept for any existing stored paths) -->
+    <external-files-path name="external_pictures" path="Pictures/" />
+    <external-files-path name="external_files" path="." />
+</paths>

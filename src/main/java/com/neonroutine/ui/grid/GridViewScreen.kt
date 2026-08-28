@@ -27,13 +27,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -74,19 +78,22 @@ fun GridViewScreen(viewModel: TaskViewModel) {
     val entriesRange by viewModel.entriesInRange.collectAsState()
 
     val today = LocalDate.now()
-    val yearMonth = YearMonth.of(today.year, today.month)
+    var gridMonth by remember { mutableStateOf(YearMonth.now()) }
+    val yearMonth = gridMonth
     val daysInMonth = yearMonth.lengthOfMonth()
-    val monthName = today.month.getDisplayName(TextStyle.FULL, Locale.getDefault())
+    val monthName = yearMonth.month.getDisplayName(TextStyle.FULL, Locale.getDefault())
+    val monthStart = yearMonth.atDay(1)
+    val monthEnd = yearMonth.atEndOfMonth()
+    val isCurrentMonth = yearMonth == YearMonth.now()
+    // For past months, evaluate all days; for current month, only up to today
+    val evaluateTo: LocalDate = if (isCurrentMonth) today else if (yearMonth.isBefore(YearMonth.now())) monthEnd else monthStart.minusDays(1)
 
-    // Load full month entries
-    val startStr = today.withDayOfMonth(1).format(DateTimeFormatter.ISO_LOCAL_DATE)
-    val endStr = today.withDayOfMonth(daysInMonth).format(DateTimeFormatter.ISO_LOCAL_DATE)
-
+    // Load entries whenever displayed month changes
     androidx.compose.runtime.LaunchedEffect(yearMonth) {
-        viewModel.loadEntriesForRange(today.withDayOfMonth(1), today.withDayOfMonth(daysInMonth))
+        viewModel.loadEntriesForRange(monthStart, monthEnd)
     }
 
-    val entryMap = entriesRange.associateWith { it }.let {
+    val entryMap = remember(entriesRange) {
         entriesRange.groupBy { it.taskId }.mapValues { (_, list) -> list.associateBy { it.date } }
     }
 
@@ -95,28 +102,52 @@ fun GridViewScreen(viewModel: TaskViewModel) {
     val filteredTasks = if (selectedCategory == null) tasks else tasks.filter { it.category == selectedCategory }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Month header
+        // Month header with navigation
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 8.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
+            IconButton(onClick = { gridMonth = gridMonth.minusMonths(1) }) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Prev Month",
+                    tint = MaterialTheme.colorScheme.onSurface)
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    monthName.uppercase(), 
-                    style = MaterialTheme.typography.titleLarge, 
+                    monthName.uppercase(),
+                    style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Black,
-                    color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White else Color.Unspecified
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    "${today.year} • ${tasks.size} Habits", 
-                    style = MaterialTheme.typography.bodySmall, 
-                    color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White.copy(alpha=0.6f) else MaterialTheme.colorScheme.onSurfaceVariant
+                    "${yearMonth.year} • ${tasks.size} Habits",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            // Legend
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (!isCurrentMonth) {
+                    androidx.compose.material3.TextButton(
+                        onClick = { gridMonth = YearMonth.now() },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                        modifier = Modifier.height(30.dp)
+                    ) { Text("Now", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary) }
+                }
+                IconButton(onClick = { gridMonth = gridMonth.plusMonths(1) }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next Month",
+                        tint = MaterialTheme.colorScheme.onSurface)
+                }
+            }
+        }
+
+        // Legend
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 LegendDot(Color(0xFF4CAF50), "Done")
                 LegendDot(Color(0xFFFF9800), "Partial")
@@ -197,7 +228,7 @@ fun GridViewScreen(viewModel: TaskViewModel) {
             item {
                 Row(modifier = Modifier.padding(start = LABEL_WIDTH)) {
                     (1..daysInMonth).forEach { day ->
-                        val date = today.withDayOfMonth(day)
+                        val date = yearMonth.atDay(day)
                         val isToday = date == today
                         val dayLabel = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.getDefault()).take(3)
                         Column(
@@ -205,10 +236,10 @@ fun GridViewScreen(viewModel: TaskViewModel) {
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
-                                dayLabel, 
-                                style = MaterialTheme.typography.labelSmall, 
-                                fontSize = 8.sp, 
-                                color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White.copy(alpha=0.5f) else MaterialTheme.colorScheme.onSurfaceVariant
+                                dayLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 8.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Box(
                                 modifier = Modifier
@@ -221,8 +252,7 @@ fun GridViewScreen(viewModel: TaskViewModel) {
                                     "$day",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontSize = 9.sp,
-                                    color = if (isToday) MaterialTheme.colorScheme.onPrimary 
-                                            else if (designStyle == DesignStyle.GLASSMORPHISM) Color.White 
+                                    color = if (isToday) MaterialTheme.colorScheme.onPrimary
                                             else MaterialTheme.colorScheme.onSurface,
                                     fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal
                                 )
@@ -246,21 +276,24 @@ fun GridViewScreen(viewModel: TaskViewModel) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "${cat.emoji} ${cat.label.uppercase()}", 
-                            style = MaterialTheme.typography.labelSmall, 
-                            color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White.copy(alpha=0.9f) else MaterialTheme.colorScheme.primary, 
+                            "${cat.emoji} ${cat.label.uppercase()}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold
                         )
                     }
                 }
-                items(catTasks, key = { "${it.id}_${entriesRange.hashCode()}" }) { task ->
+                items(catTasks, key = { it.id }, contentType = { "grid_row" }) { task ->
                     val taskColor = try { Color(android.graphics.Color.parseColor(task.color)) } catch (_: Exception) { MaterialTheme.colorScheme.primary }
                     val taskEntries = entryMap[task.id] ?: emptyMap()
 
-                    // Calculate month completion rate
+                    // Compute completion % only for days up to evaluateTo in the viewed month
+                    val scheduledDays = (1..daysInMonth).count { d ->
+                        val date = yearMonth.atDay(d)
+                        !date.isAfter(evaluateTo) && viewModel.isTaskScheduledForDate(task, date)
+                    }
                     val completedDays = taskEntries.values.count { it.completionState == CompletionState.COMPLETED }
-                    val totalDays = today.dayOfMonth
-                    val completionPct = if (totalDays > 0) ((completedDays.toFloat() / totalDays) * 100).toInt() else 0
+                    val completionPct = if (scheduledDays > 0) ((completedDays.toFloat() / scheduledDays) * 100).toInt() else 0
 
                     Row(
                         modifier = Modifier
@@ -287,44 +320,44 @@ fun GridViewScreen(viewModel: TaskViewModel) {
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     fontSize = 10.sp,
-                                    color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White else Color.Unspecified
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Text(
-                                    "$completionPct%", 
-                                    style = MaterialTheme.typography.labelSmall, 
-                                    fontSize = 8.sp, 
-                                    color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White.copy(alpha=0.6f) else MaterialTheme.colorScheme.onSurfaceVariant
+                                    "$completionPct%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 8.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
 
-                        // Day cells row
-                        Row {
-                            (1..daysInMonth).forEach { day ->
-                                val date = today.withDayOfMonth(day)
-                                val dateStr = date.format(DateTimeFormatter.ISO_LOCAL_DATE)
-                                val entry = taskEntries[dateStr]
-                                val state = entry?.completionState ?: CompletionState.NONE
-                                val isFuture = date.isAfter(today)
+                    // Day cells row
+                    Row {
+                        (1..daysInMonth).forEach { day ->
+                            val date = yearMonth.atDay(day)
+                            val dateStr = date.format(DateTimeFormatter.ISO_LOCAL_DATE)
+                            val entry = taskEntries[dateStr]
+                            val state = entry?.completionState ?: CompletionState.NONE
+                            val isFuture = date.isAfter(today)
 
-                                GridCell(
-                                    state = state,
-                                    isFuture = isFuture,
-                                    isToday = date == today,
-                                    taskColor = taskColor,
-                                    cellSize = CELL_SIZE,
-                                    onClick = {
-                                        if (!isFuture) viewModel.cycleGridState(task.id, dateStr, state)
-                                    }
-                                )
-                            }
+                            GridCell(
+                                state = state,
+                                isFuture = isFuture,
+                                isToday = date == today,
+                                taskColor = taskColor,
+                                cellSize = CELL_SIZE,
+                                onClick = {
+                                    if (!isFuture) viewModel.cycleGridState(task.id, dateStr, state)
+                                }
+                            )
                         }
+                    }
                     }
                 }
             }
 
             // Bottom Summary Rows
-            item(key = "summary_${entriesRange.hashCode()}") {
+            item(key = "summary_row") {
                 Spacer(Modifier.height(16.dp))
                 // Row 1: DAILY COMPLETION %
                 Row(modifier = Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -334,11 +367,11 @@ fun GridViewScreen(viewModel: TaskViewModel) {
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         fontSize = 9.sp,
-                        color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White else MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.primary
                     )
                     Row {
                         (1..daysInMonth).forEach { day ->
-                            val date = today.withDayOfMonth(day)
+                            val date = yearMonth.atDay(day)
                             val dateStr = date.format(DateTimeFormatter.ISO_LOCAL_DATE)
                             val scheduledForDay = filteredTasks.filter { viewModel.isTaskScheduledForDate(it, date) }
                             val total = scheduledForDay.size
@@ -350,10 +383,10 @@ fun GridViewScreen(viewModel: TaskViewModel) {
 
                             Box(modifier = Modifier.width(CELL_SIZE + 4.dp), contentAlignment = Alignment.Center) {
                                 Text(
-                                    "$pct%", 
-                                    style = MaterialTheme.typography.labelSmall, 
-                                    fontSize = 8.sp, 
-                                    color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White else MaterialTheme.colorScheme.onSurface
+                                    if (date.isAfter(today)) "-" else "$pct%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 8.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
                         }
@@ -367,11 +400,11 @@ fun GridViewScreen(viewModel: TaskViewModel) {
                         modifier = Modifier.width(LABEL_WIDTH).padding(horizontal = 8.dp),
                         style = MaterialTheme.typography.labelSmall,
                         fontSize = 9.sp,
-                        color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White.copy(alpha=0.7f) else MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Row {
                         (1..daysInMonth).forEach { day ->
-                            val date = today.withDayOfMonth(day)
+                            val date = yearMonth.atDay(day)
                             val dateStr = date.format(DateTimeFormatter.ISO_LOCAL_DATE)
                             val scheduledForDay = filteredTasks.filter { viewModel.isTaskScheduledForDate(it, date) }
                             val completed = scheduledForDay.count { task ->
@@ -381,10 +414,10 @@ fun GridViewScreen(viewModel: TaskViewModel) {
 
                             Box(modifier = Modifier.width(CELL_SIZE + 4.dp), contentAlignment = Alignment.Center) {
                                 Text(
-                                    "$completed", 
-                                    style = MaterialTheme.typography.labelSmall, 
-                                    fontSize = 9.sp, 
-                                    color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White else MaterialTheme.colorScheme.onSurface
+                                    if (date.isAfter(today)) "-" else "$completed",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 9.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
                         }
@@ -398,20 +431,20 @@ fun GridViewScreen(viewModel: TaskViewModel) {
                         modifier = Modifier.width(LABEL_WIDTH).padding(horizontal = 8.dp),
                         style = MaterialTheme.typography.labelSmall,
                         fontSize = 9.sp,
-                        color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White.copy(alpha=0.7f) else MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Row {
                         (1..daysInMonth).forEach { day ->
-                            val date = today.withDayOfMonth(day)
+                            val date = yearMonth.atDay(day)
                             val scheduledForDay = filteredTasks.filter { viewModel.isTaskScheduledForDate(it, date) }
                             val total = scheduledForDay.size
 
                             Box(modifier = Modifier.width(CELL_SIZE + 4.dp), contentAlignment = Alignment.Center) {
                                 Text(
-                                    "$total", 
-                                    style = MaterialTheme.typography.labelSmall, 
-                                    fontSize = 9.sp, 
-                                    color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White.copy(alpha=0.7f) else MaterialTheme.colorScheme.onSurfaceVariant
+                                    "$total",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 9.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
@@ -493,14 +526,13 @@ fun GridCell(
 @Composable
 fun LegendDot(color: Color, label: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        val designStyle = LocalDesignStyle.current
         Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(color))
         Spacer(Modifier.width(2.dp))
         Text(
-            label, 
-            style = MaterialTheme.typography.labelSmall, 
+            label,
+            style = MaterialTheme.typography.labelSmall,
             fontSize = 9.sp,
-            color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White else Color.Unspecified
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }

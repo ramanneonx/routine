@@ -74,14 +74,22 @@ fun WeekScreen(viewModel: TaskViewModel) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            IconButton(onClick = { weekStart = weekStart.minusWeeks(1); viewModel.selectDate(weekStart.minusWeeks(1)) }) {
+            IconButton(onClick = { 
+                val newWeek = weekStart.minusWeeks(1)
+                weekStart = newWeek
+                viewModel.selectDate(newWeek) 
+            }) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Previous week")
             }
             Text(
                 "${weekStart.month.getDisplayName(TextStyle.SHORT, Locale.getDefault())} ${weekStart.year}",
                 style = MaterialTheme.typography.titleMedium
             )
-            IconButton(onClick = { weekStart = weekStart.plusWeeks(1); viewModel.selectDate(weekStart.plusWeeks(1)) }) {
+            IconButton(onClick = { 
+                val newWeek = weekStart.plusWeeks(1)
+                weekStart = newWeek
+                viewModel.selectDate(newWeek) 
+            }) {
                 Icon(Icons.AutoMirrored.Filled.ArrowForward, "Next week")
             }
         }

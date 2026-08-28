@@ -50,7 +50,7 @@ abstract class AppDatabase : RoomDatabase() {
                     "NeonRoutine_db"
                 )
                     .addMigrations(MIGRATION_1_2, MIGRATION_3_4, MIGRATION_4_5)
-                    .fallbackToDestructiveMigration()
+                    .fallbackToDestructiveMigration(true)
                     .build()
                 INSTANCE = instance
                 instance

@@ -41,6 +41,7 @@ import com.neonroutine.data.model.CompletionState
 import com.neonroutine.data.model.Entry
 import com.neonroutine.data.model.Recurrence
 import com.neonroutine.data.model.Task
+import com.neonroutine.data.prefs.AppPreferences
 import kotlinx.serialization.json.Json
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -70,13 +71,17 @@ class RoutineWidget : GlanceAppWidget() {
         val total = scheduledTasks.size
         val pct = if (total > 0) ((completed.toFloat() / total) * 100).toInt() else 0
 
+        // Read user-customized widget text from shared prefs
+        val widgetTitle = AppPreferences.readWidgetTitle(context)
+        val widgetSubtitle = AppPreferences.readWidgetSubtitle(context)
+
         provideContent {
             GlanceTheme {
                 androidx.glance.LocalSize.current.let { size ->
                     when {
                         size.width < 200.dp -> SmallLayout(pct, completed, total)
-                        size.height < 160.dp -> MediumLayout(scheduledTasks, entryMap, pct, completed, total)
-                        else -> LargeLayout(scheduledTasks, entryMap, pct, completed, total)
+                        size.height < 160.dp -> MediumLayout(scheduledTasks, entryMap, pct, completed, total, widgetTitle)
+                        else -> LargeLayout(scheduledTasks, entryMap, pct, completed, total, widgetTitle, widgetSubtitle)
                     }
                 }
             }
@@ -123,7 +128,8 @@ class RoutineWidget : GlanceAppWidget() {
         entryMap: Map<String, Entry>,
         pct: Int,
         completed: Int,
-        total: Int
+        total: Int,
+        widgetTitle: String = AppPreferences.DEFAULT_WIDGET_TITLE
     ) {
         val accent = Color(0xFF7F77DD)
         Column(
@@ -138,7 +144,7 @@ class RoutineWidget : GlanceAppWidget() {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "⚡ NeonRoutine",
+                    widgetTitle,
                     style = TextStyle(
                         color = androidx.glance.unit.ColorProvider(accent),
                         fontSize = 13.sp,
@@ -205,7 +211,9 @@ class RoutineWidget : GlanceAppWidget() {
         entryMap: Map<String, Entry>,
         pct: Int,
         completed: Int,
-        total: Int
+        total: Int,
+        widgetTitle: String = AppPreferences.DEFAULT_WIDGET_TITLE,
+        widgetSubtitle: String = AppPreferences.DEFAULT_WIDGET_SUBTITLE
     ) {
         val accent = Color(0xFF7F77DD)
         Column(
@@ -220,15 +228,23 @@ class RoutineWidget : GlanceAppWidget() {
                 modifier = GlanceModifier.fillMaxWidth().clickable(actionStartActivity<MainActivity>()),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    "⚡ Today's Habits",
-                    style = TextStyle(
-                        color = androidx.glance.unit.ColorProvider(Color.White),
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    modifier = GlanceModifier.defaultWeight()
-                )
+                Column(modifier = GlanceModifier.defaultWeight()) {
+                    Text(
+                        widgetTitle,
+                        style = TextStyle(
+                            color = androidx.glance.unit.ColorProvider(Color.White),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    )
+                    Text(
+                        widgetSubtitle,
+                        style = TextStyle(
+                            color = androidx.glance.unit.ColorProvider(Color.White.copy(alpha = 0.5f)),
+                            fontSize = 10.sp
+                        )
+                    )
+                }
                 Text(
                     "$pct%",
                     style = TextStyle(

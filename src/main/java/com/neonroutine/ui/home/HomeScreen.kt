@@ -17,6 +17,7 @@ import androidx.compose.foundation.interaction.Interaction
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.*
@@ -40,9 +41,12 @@ import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle as JavaTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.geometry.Offset
-
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.roundToInt
+
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -54,12 +58,19 @@ fun HomeScreen(
     onNavigateToCamera: (String) -> Unit = {}
 ) {
     val tasks by viewModel.tasks.collectAsState()
+    val stats by viewModel.statsData.collectAsState()
     val entriesMap by viewModel.entriesForDate.collectAsState()
     val entriesRange by viewModel.entriesInRange.collectAsState()
     val today = LocalDate.now()
     val greetingHour = java.time.LocalTime.now().hour
     val appShapes = LocalAppShapes.current
     val designStyle = LocalDesignStyle.current
+    val context = LocalContext.current
+
+    // Custom greeting and quote from Settings
+    val appPrefs = remember { (context.applicationContext as com.neonroutine.NeonRoutineApp).appPreferences }
+    val customGreeting by appPrefs.homeGreeting.collectAsState()
+    val motivationQuote by appPrefs.motivationQuote.collectAsState()
 
     val yearMonth = YearMonth.of(today.year, today.month)
     LaunchedEffect(yearMonth) {
@@ -70,13 +81,13 @@ fun HomeScreen(
         entriesRange.groupBy { it.taskId }.mapValues { (_, list) -> list.associateBy { it.date } }
     }
 
-    val context = androidx.compose.ui.platform.LocalContext.current
     var currentPhotoTask by remember { mutableStateOf<Task?>(null) }
     var currentPhotoFile by remember { mutableStateOf<File?>(null) }
     var showPhotoDialogForTask by remember { mutableStateOf<Task?>(null) }
     var showTimerSelectDialogForTask by remember { mutableStateOf<Task?>(null) }
     var longPressedTask by remember { mutableStateOf<Task?>(null) }
     val haptic = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
 
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         if (success && currentPhotoTask != null && currentPhotoFile != null) {
@@ -88,28 +99,34 @@ fun HomeScreen(
 
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null && currentPhotoTask != null) {
-            try {
-                val dir = File(context.cacheDir, "gallery")
-                if (!dir.exists()) dir.mkdirs()
-                val file = File(dir, "gallery_${currentPhotoTask!!.id}_${today.format(DateTimeFormatter.ISO_LOCAL_DATE)}_${System.currentTimeMillis()}.jpg")
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    file.outputStream().use { output ->
-                        input.copyTo(output)
+            val taskSnapshot = currentPhotoTask
+            currentPhotoTask = null
+            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                val savedPath = com.neonroutine.util.PhotoStorageUtil.importFromGallery(
+                    context = context,
+                    uri = uri,
+                    taskId = taskSnapshot!!.id,
+                    date = today
+                )
+                if (savedPath != null) {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        viewModel.savePhotoToEntry(taskSnapshot.id, today, savedPath)
                     }
                 }
-                viewModel.savePhotoToEntry(currentPhotoTask!!.id, today, file.absolutePath)
-            } catch (e: Exception) {
-                e.printStackTrace()
             }
+        } else {
+            currentPhotoTask = null
         }
-        currentPhotoTask = null
     }
 
-    val greeting = when {
+    // Time-based greeting prefix + custom message from Settings
+    val timeGreeting = when {
         greetingHour < 12 -> "Good morning! ☀️"
         greetingHour < 17 -> "Good afternoon! 👋"
         else -> "Good evening! 🌙"
     }
+    // If user has customized the greeting, show it; otherwise fall back to time-based
+    val greeting = if (customGreeting != com.neonroutine.data.prefs.AppPreferences.DEFAULT_HOME_GREETING) customGreeting else timeGreeting
 
     val scheduledTasks = remember(tasks) { tasks.filter { viewModel.isTaskScheduledForDate(it, today) } }
     val completedCount = remember(scheduledTasks, entriesMap) {
@@ -127,12 +144,8 @@ fun HomeScreen(
     val totalCount = scheduledTasks.size
     val completionPct = if (totalCount > 0) ((completedCount + partialCount * 0.5f) / totalCount) else 0f
 
-    var streak by remember { mutableIntStateOf(0) }
-    var totalPoints by remember { mutableIntStateOf(0) }
-    LaunchedEffect(tasks) {
-        streak = viewModel.getStreakCount()
-        totalPoints = viewModel.getTotalPoints()
-    }
+    val streak = stats.streak
+    val totalPoints = stats.totalPoints
 
     val level = (totalPoints / 100) + 1
     val levelProgress = (totalPoints % 100) / 100f
@@ -169,19 +182,7 @@ fun HomeScreen(
         )
     }
 
-    Scaffold(
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = onAddTask,
-                containerColor = MaterialTheme.colorScheme.primary,
-                modifier = if (designStyle == DesignStyle.GLASSMORPHISM) Modifier.glassHover() else Modifier
-            ) {
-                Icon(Icons.Filled.Add, contentDescription = "Add Habit", tint = MaterialTheme.colorScheme.onPrimary)
-            }
-        },
-        containerColor = Color.Transparent
-    ) { innerPadding ->
-        Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxSize()) {
         if (showPhotoDialogForTask != null) {
             val task = showPhotoDialogForTask!!
             AlertDialog(
@@ -242,7 +243,8 @@ fun HomeScreen(
         }
 
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(innerPadding),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
@@ -266,7 +268,17 @@ fun HomeScreen(
                     )
                     Spacer(Modifier.height(16.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(greeting, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(greeting, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            if (motivationQuote.isNotBlank()) {
+                                Text(
+                                    motivationQuote,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
+                        }
                         Text(
                             today.dayOfWeek.getDisplayName(JavaTextStyle.FULL, Locale.getDefault()) + ", " +
                                     today.format(DateTimeFormatter.ofPattern("MMM d")),
@@ -383,12 +395,12 @@ fun HomeScreen(
                                 "Level $level Progress", 
                                 style = MaterialTheme.typography.titleSmall, 
                                 fontWeight = FontWeight.SemiBold,
-                                color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White else Color.Unspecified
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                "${(levelProgress * 100).roundToInt()}% to Lvl ${level + 1}", 
+                                "${(levelProgress * 100).toInt()}% to Lvl ${level + 1}", 
                                 style = MaterialTheme.typography.labelSmall, 
-                                color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White.copy(alpha=0.7f) else MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Spacer(Modifier.height(8.dp))
@@ -398,7 +410,7 @@ fun HomeScreen(
                             modifier = Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(50)),
                             strokeCap = StrokeCap.Round,
                             color = MaterialTheme.colorScheme.primary,
-                            trackColor = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White.copy(alpha=0.15f) else MaterialTheme.colorScheme.surfaceVariant
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant
                         )
                     }
                 }
@@ -414,12 +426,12 @@ fun HomeScreen(
                         "Today's Habits", 
                         style = MaterialTheme.typography.titleMedium, 
                         fontWeight = FontWeight.Bold,
-                        color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White else Color.Unspecified
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
                         "${scheduledTasks.size} habits", 
                         style = MaterialTheme.typography.labelMedium, 
-                        color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White.copy(alpha=0.6f) else MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -431,11 +443,11 @@ fun HomeScreen(
                     Text(
                         "${cat.emoji} ${cat.label}",
                         style = MaterialTheme.typography.labelMedium,
-                        color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White.copy(alpha=0.8f) else MaterialTheme.colorScheme.primary,
+                        color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(start = 20.dp, top = 4.dp)
                     )
                 }
-                items(catTasks, key = { "home_${it.id}" }) { task ->
+                items(catTasks, key = { "home_${it.id}" }, contentType = { "habit_card" }) { task ->
                     val entry = entriesMap[task.id]
                     val state = entry?.completionState ?: CompletionState.NONE
                     val taskColor = try { Color(android.graphics.Color.parseColor(task.color)) } catch (_: Exception) { MaterialTheme.colorScheme.primary }
@@ -451,7 +463,6 @@ fun HomeScreen(
                                         .glassHover(habitInteractionSource)
                                 } else Modifier
                             )
-                            .animateContentSize()
                             .combinedClickable(
                                 interactionSource = habitInteractionSource,
                                 indication = LocalIndication.current,
@@ -487,12 +498,12 @@ fun HomeScreen(
                                     task.title, 
                                     style = MaterialTheme.typography.titleSmall, 
                                     fontWeight = FontWeight.SemiBold,
-                                    color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White else Color.Unspecified
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Text(
                                     "+${task.pointsValue} pts • ${cat.label}", 
                                     style = MaterialTheme.typography.labelSmall, 
-                                    color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White.copy(alpha=0.6f) else MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
 
@@ -506,7 +517,7 @@ fun HomeScreen(
                                         Icons.Filled.CameraAlt,
                                         contentDescription = "Log Selfie",
                                         tint = if (entry?.photoPath.isNullOrBlank()) {
-                                            if (designStyle == DesignStyle.GLASSMORPHISM) Color.White.copy(alpha=0.4f) else MaterialTheme.colorScheme.onSurfaceVariant
+                                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                                         } else MaterialTheme.colorScheme.primary
                                     )
                                 }
@@ -549,20 +560,31 @@ fun HomeScreen(
                             "No habits for today!", 
                             style = MaterialTheme.typography.titleMedium, 
                             textAlign = TextAlign.Center,
-                            color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White else Color.Unspecified
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
                             "Tap + to add your first habit", 
                             style = MaterialTheme.typography.bodySmall, 
-                            color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White.copy(alpha=0.5f) else MaterialTheme.colorScheme.onSurfaceVariant, 
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, 
                             textAlign = TextAlign.Center
                         )
                     }
                 }
             }
 
-            item { Spacer(Modifier.height(80.dp)) }
+            item { Spacer(Modifier.height(16.dp)) }
         }
+
+        // Floating Action Button
+        FloatingActionButton(
+            onClick = onAddTask,
+            containerColor = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 16.dp, bottom = 16.dp)
+                .then(if (designStyle == DesignStyle.GLASSMORPHISM) Modifier.glassHover() else Modifier)
+        ) {
+            Icon(Icons.Filled.Add, contentDescription = "Add Habit", tint = MaterialTheme.colorScheme.onPrimary)
         }
     }
 }
@@ -571,6 +593,8 @@ fun HomeScreen(
 fun CycleStateButton(state: CompletionState, color: Color, onClick: () -> Unit) {
     val appShapes = LocalAppShapes.current
     val designStyle = LocalDesignStyle.current
+    val haptic = LocalHapticFeedback.current
+    val view = LocalView.current
     
     val (bgColor, label) = when (state) {
         CompletionState.COMPLETED -> Color(0xFF4CAF50) to "✓"
@@ -579,6 +603,13 @@ fun CycleStateButton(state: CompletionState, color: Color, onClick: () -> Unit) 
         CompletionState.NONE -> color.copy(0.15f) to "○"
     }
     val animBg by animateColorAsState(targetValue = bgColor, animationSpec = tween(300), label = "stateColor")
+
+    var pressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.78f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        label = "btnScale"
+    )
     
     val borderModifier = if (designStyle == DesignStyle.BRUTAL_MINIMAL) {
         Modifier.border(2.dp, MaterialTheme.colorScheme.outline, appShapes.card)
@@ -587,20 +618,37 @@ fun CycleStateButton(state: CompletionState, color: Color, onClick: () -> Unit) 
     Box(
         modifier = Modifier
             .size(36.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .clip(appShapes.card)
             .background(animBg)
             .then(borderModifier)
-            .clickable { onClick() },
+            .clickable {
+                try { view.playSoundEffect(android.view.SoundEffectConstants.CLICK) } catch (_: Exception) {}
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                pressed = true
+                onClick()
+                pressed = false
+            },
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelLarge,
-            color = if (state == CompletionState.NONE) {
-                if (designStyle == DesignStyle.GLASSMORPHISM) Color.White.copy(alpha=0.5f) else color
-            } else Color.White,
-            fontWeight = FontWeight.Bold
-        )
+        AnimatedContent(
+            targetState = label,
+            transitionSpec = {
+                (fadeIn(animationSpec = tween(200)) + scaleIn(initialScale = 0.8f))
+                    .togetherWith(fadeOut(animationSpec = tween(200)) + scaleOut(targetScale = 1.2f))
+            },
+            label = "btnLabelAnim"
+        ) { targetLabel ->
+            Text(
+                targetLabel,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (state == CompletionState.NONE) color else Color.White,
+                fontWeight = FontWeight.Bold
+            )
+        }
     }
 }
 
@@ -641,12 +689,12 @@ fun StatMiniCard(
                 value, 
                 style = MaterialTheme.typography.titleMedium, 
                 fontWeight = FontWeight.Black,
-                color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White else Color.Unspecified
+                color = MaterialTheme.colorScheme.onSurface
             )
             Text(
                 label, 
                 style = MaterialTheme.typography.labelSmall, 
-                color = if (designStyle == DesignStyle.GLASSMORPHISM) Color.White.copy(alpha=0.6f) else MaterialTheme.colorScheme.onSurfaceVariant, 
+                color = MaterialTheme.colorScheme.onSurfaceVariant, 
                 fontSize = 9.sp
             )
         }

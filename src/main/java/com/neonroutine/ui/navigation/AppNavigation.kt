@@ -1,9 +1,11 @@
 package com.neonroutine.ui.navigation
 
-import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.*
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import com.neonroutine.ui.theme.ThemePreset
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -26,11 +28,15 @@ import androidx.compose.material3.NavigationBarDefaults
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,6 +45,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -78,16 +86,16 @@ fun AppNavigation() {
         navController = navController,
         startDestination = "dashboard",
         enterTransition = {
-            slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, animationSpec = tween(300))
+            slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
         },
         exitTransition = {
-            slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, animationSpec = tween(300))
+            slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
         },
         popEnterTransition = {
-            slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, animationSpec = tween(300))
+            slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
         },
         popExitTransition = {
-            slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, animationSpec = tween(300))
+            slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
         }
     ) {
         composable("dashboard") {
@@ -140,12 +148,18 @@ fun AppNavigation() {
             val taskId = backStackEntry.arguments?.getString("taskId") ?: return@composable
             val ctx = LocalContext.current
             val today = LocalDate.now()
-            val dir = File(ctx.filesDir, "camera")
-            if (!dir.exists()) dir.mkdirs()
-            val file = File(dir, "face_${taskId}_${today.format(DateTimeFormatter.ISO_LOCAL_DATE)}.jpg")
+            val file = com.neonroutine.util.PhotoStorageUtil.createMemoryPhotoFile(ctx, taskId, today)
+            
+            val entries by taskViewModel.entriesInRange.collectAsState()
+            val lastPhoto = remember(entries, taskId) {
+                entries
+                    .filter { it.taskId == taskId && !it.photoPath.isNullOrBlank() && File(it.photoPath).exists() }
+                    .maxByOrNull { it.date }?.photoPath
+            }
 
             CameraOverlayScreen(
                 outputFile = file,
+                lastPhotoPath = lastPhoto,
                 onPhotoTaken = { absPath ->
                     taskViewModel.savePhotoToEntry(taskId, today, absPath)
                     navController.popBackStack()
@@ -156,15 +170,28 @@ fun AppNavigation() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(navController: NavController, taskViewModel: TaskViewModel) {
-    val pagerState = rememberPagerState(pageCount = { bottomNavItems.size })
-    val coroutineScope = rememberCoroutineScope()
+    var selectedTabIndex by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(0) }
     val designStyle = LocalDesignStyle.current
     val appShapes = LocalAppShapes.current
+    val snackbarHostState = remember { SnackbarHostState() }
 
-    val currentScreen = bottomNavItems[pagerState.currentPage]
+    val currentScreen = bottomNavItems[selectedTabIndex.coerceIn(0, bottomNavItems.size - 1)]
+
+    // Collect one-shot UI events from the ViewModel and show as snackbars
+    LaunchedEffect(Unit) {
+        taskViewModel.uiEvent.collect { message ->
+            snackbarHostState.showSnackbar(
+                message = message,
+                duration = SnackbarDuration.Short,
+                withDismissAction = false
+            )
+        }
+    }
+
+    val saveableStateHolder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
 
     // Brutal Minimal uses a top-tab style — we put it above the content
     if (designStyle == DesignStyle.BRUTAL_MINIMAL) {
@@ -178,12 +205,12 @@ fun DashboardScreen(navController: NavController, taskViewModel: TaskViewModel) 
                         .padding(0.dp)
                 ) {
                     bottomNavItems.forEachIndexed { index, screen ->
-                        val selected = pagerState.currentPage == index
+                        val selected = selectedTabIndex == index
                         Box(
                             modifier = Modifier
                                 .weight(1f)
                                 .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                                .clickable { coroutineScope.launch { pagerState.animateScrollToPage(index) } }
+                                .clickable { selectedTabIndex = index }
                                 .padding(vertical = 14.dp),
                             contentAlignment = androidx.compose.ui.Alignment.Center
                         ) {
@@ -199,13 +226,7 @@ fun DashboardScreen(navController: NavController, taskViewModel: TaskViewModel) 
                     }
                 }
                 Box(modifier = Modifier.weight(1f).fillMaxSize()) {
-                    HorizontalPager(
-                        state = pagerState,
-                        modifier = Modifier.fillMaxSize(),
-                        key = { page -> bottomNavItems[page].route }
-                    ) { page ->
-                        RenderPage(page, navController, taskViewModel, coroutineScope, pagerState)
-                    }
+                    AllTabsLayout(selectedTabIndex, navController, taskViewModel, onNavigateHome = { selectedTabIndex = 0 })
                 }
                 // Settings icon bottom strip
                 Box(
@@ -251,104 +272,104 @@ fun DashboardScreen(navController: NavController, taskViewModel: TaskViewModel) 
     // Standard scaffold for NEON_GLOW, SOFT_PASTEL and GLASSMORPHISM
     Box(modifier = Modifier.fillMaxSize().then(if (bgGradient != null) Modifier.background(bgGradient) else Modifier)) {
         Scaffold(
-            containerColor = Color.Transparent, // Let the Box handle the background for smoothness
+            containerColor = Color.Transparent,
+            snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        currentScreen.label,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = if (designStyle == DesignStyle.SOFT_PASTEL) FontWeight.SemiBold else FontWeight.Bold
-                    )
-                },
-                actions = {
-                    IconButton(onClick = { navController.navigate(Screen.Settings.route) }) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = if (designStyle == DesignStyle.NEON_GLOW)
-                        MaterialTheme.colorScheme.background
-                    else
-                        MaterialTheme.colorScheme.surface
-                )
-            )
-        },
-        bottomBar = {
-            NavigationBar(
-                modifier = if (designStyle == DesignStyle.NEON_GLOW)
-                    Modifier.clip(appShapes.bottomNav)
-                else Modifier,
-                containerColor = if (designStyle == DesignStyle.NEON_GLOW)
-                    MaterialTheme.colorScheme.surface
-                else
-                    MaterialTheme.colorScheme.surface,
-                tonalElevation = if (designStyle == DesignStyle.SOFT_PASTEL) 2.dp else 0.dp
-            ) {
-                bottomNavItems.forEachIndexed { index, screen ->
-                    NavigationBarItem(
-                        icon = { Icon(screen.icon!!, contentDescription = screen.label) },
-                        label = { Text(screen.label) },
-                        selected = pagerState.currentPage == index,
-                        onClick = {
-                            coroutineScope.launch {
-                                pagerState.animateScrollToPage(
-                                    index,
-                                    animationSpec = spring(
-                                        dampingRatio = Spring.DampingRatioNoBouncy,
-                                        stiffness = Spring.StiffnessMedium
-                                    )
-                                )
-                            }
-                        },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = MaterialTheme.colorScheme.primary,
-                            selectedTextColor = MaterialTheme.colorScheme.primary,
-                            indicatorColor = MaterialTheme.colorScheme.primaryContainer
+                TopAppBar(
+                    title = {
+                        Text(
+                            currentScreen.label,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = if (designStyle == DesignStyle.SOFT_PASTEL) FontWeight.SemiBold else FontWeight.Bold
                         )
+                    },
+                    actions = {
+                        IconButton(onClick = { navController.navigate(Screen.Settings.route) }) {
+                            Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = if (designStyle == DesignStyle.NEON_GLOW)
+                            MaterialTheme.colorScheme.background
+                        else
+                            MaterialTheme.colorScheme.surface
                     )
+                )
+            },
+            bottomBar = {
+                NavigationBar(
+                    modifier = if (designStyle == DesignStyle.NEON_GLOW)
+                        Modifier.clip(appShapes.bottomNav)
+                    else Modifier,
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    tonalElevation = if (designStyle == DesignStyle.SOFT_PASTEL) 2.dp else 0.dp
+                ) {
+                    bottomNavItems.forEachIndexed { index, screen ->
+                        NavigationBarItem(
+                            icon = { Icon(screen.icon!!, contentDescription = screen.label) },
+                            label = { Text(screen.label) },
+                            selected = selectedTabIndex == index,
+                            onClick = { selectedTabIndex = index },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = MaterialTheme.colorScheme.primary,
+                                selectedTextColor = MaterialTheme.colorScheme.primary,
+                                indicatorColor = MaterialTheme.colorScheme.primaryContainer
+                            )
+                        )
+                    }
                 }
             }
-        }
         ) { innerPadding ->
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.padding(innerPadding).fillMaxSize(),
-                key = { page -> bottomNavItems[page].route }  // Stable keys prevent full recomposition
-            ) { page ->
-                RenderPage(page, navController, taskViewModel, coroutineScope, pagerState)
+            Box(
+                modifier = Modifier
+                    .padding(innerPadding)
+                    .fillMaxSize()
+            ) {
+                AllTabsLayout(selectedTabIndex, navController, taskViewModel, onNavigateHome = { selectedTabIndex = 0 })
             }
         }
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+/**
+ * Keeps ALL tab composables alive simultaneously for 0ms tab switching.
+ * Inactive tabs are visually hidden and moved 10,000 pixels off-screen 
+ * so they cannot intercept any touch events, preserving 120 FPS scrolling.
+ */
 @Composable
-private fun RenderPage(
-    page: Int,
+private fun AllTabsLayout(
+    selectedIndex: Int,
     navController: NavController,
     taskViewModel: TaskViewModel,
-    coroutineScope: kotlinx.coroutines.CoroutineScope,
-    pagerState: androidx.compose.foundation.pager.PagerState
+    onNavigateHome: () -> Unit
 ) {
-    when (bottomNavItems[page]) {
-        Screen.Home -> HomeScreen(
-            viewModel = taskViewModel,
-            onAddTask = { navController.navigate(Screen.AddTask.route) },
-            onEditTask = { taskId -> navController.navigate(Screen.EditTask.createRoute(taskId)) },
-            onNavigateToTimer = { taskId, index -> navController.navigate(Screen.Timer.createRoute(taskId, index)) },
-            onNavigateToCamera = { taskId -> navController.navigate(Screen.Camera.createRoute(taskId)) }
-        )
-        Screen.Grid   -> GridViewScreen(viewModel = taskViewModel)
-        Screen.Month  -> MonthScreen(viewModel = taskViewModel)
-        Screen.Stats  -> StatsScreen(viewModel = taskViewModel)
-        Screen.Memory -> MemoryScreen(
-            viewModel = taskViewModel,
-            onBack = {
-                coroutineScope.launch { pagerState.animateScrollToPage(0) }
+    Box(modifier = Modifier.fillMaxSize()) {
+        bottomNavItems.forEachIndexed { index, screen ->
+            val isActive = selectedIndex == index
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { 
+                        alpha = if (isActive) 1f else 0f
+                        translationX = if (isActive) 0f else 10000f // Move off-screen to kill touch intercept
+                    }
+            ) {
+                when (screen) {
+                    Screen.Home -> HomeScreen(
+                        viewModel = taskViewModel,
+                        onAddTask = { navController.navigate(Screen.AddTask.route) },
+                        onEditTask = { taskId -> navController.navigate(Screen.EditTask.createRoute(taskId)) },
+                        onNavigateToTimer = { taskId, idx -> navController.navigate(Screen.Timer.createRoute(taskId, idx)) },
+                        onNavigateToCamera = { taskId -> navController.navigate(Screen.Camera.createRoute(taskId)) }
+                    )
+                    Screen.Grid   -> GridViewScreen(viewModel = taskViewModel)
+                    Screen.Month  -> MonthScreen(viewModel = taskViewModel)
+                    Screen.Stats  -> StatsScreen(viewModel = taskViewModel)
+                    Screen.Memory -> MemoryScreen(viewModel = taskViewModel, onBack = onNavigateHome)
+                    else -> {}
+                }
             }
-        )
-        else -> {}
+        }
     }
 }
 

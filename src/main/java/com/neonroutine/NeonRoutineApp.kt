@@ -9,12 +9,17 @@ import com.neonroutine.data.prefs.NotificationPreferences
 import com.neonroutine.data.repository.RoutineRepository
 import com.neonroutine.notifications.scheduleNotifications
 
+import com.neonroutine.data.prefs.AppPreferences
+
 class NeonRoutineApp : Application() {
     val database by lazy { AppDatabase.getInstance(this) }
     val repository by lazy { RoutineRepository(database.taskDao(), database.entryDao()) }
     // Singleton ThemePreferences – shared across MainActivity and SettingsScreen
     val themePreferences by lazy { ThemePreferences(this) }
     val notificationPreferences by lazy { NotificationPreferences(this) }
+    // Central user-editable app text preferences (widget titles, greetings, etc.)
+    val appPreferences by lazy { AppPreferences(this) }
+
 
     override fun onCreate() {
         super.onCreate()

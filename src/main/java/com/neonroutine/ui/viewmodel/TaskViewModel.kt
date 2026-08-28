@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.serialization.builtins.ListSerializer
@@ -60,6 +61,8 @@ data class StatsData(
     val perTaskCompletion: List<Triple<String,String,Float>> = emptyList(),
     /** current streak length in days */
     val streak: Int = 0,
+    /** total accumulated points */
+    val totalPoints: Int = 0,
     /** how many days had 100 % completion */
     val perfectDays: Int = 0,
     /** best completion day -> day-of-month */
@@ -80,32 +83,38 @@ class TaskViewModel(application: Application) : AndroidViewModel(application) {
     val tasks: StateFlow<List<Task>> = repo.getAllActiveTasks()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // ── Stats: reactive, data-driven ─────────────────────────────────────────
-    // Live entries for the whole current month so Room triggers recomposition.
-    private val _statsMonthStart = LocalDate.now().withDayOfMonth(1)
-    private val _statsMonthEnd   = LocalDate.now().withDayOfMonth(LocalDate.now().lengthOfMonth())
+    // ── Stats & Month Browser: reactive, data-driven across ANY month ─────────
+    private val _selectedMonth = MutableStateFlow(java.time.YearMonth.now())
+    val selectedMonth: StateFlow<java.time.YearMonth> = _selectedMonth.asStateFlow()
 
-    private val _monthEntriesFlow = repo.getEntriesInRange(
-        _statsMonthStart.format(DateTimeFormatter.ISO_LOCAL_DATE),
-        _statsMonthEnd.format(DateTimeFormatter.ISO_LOCAL_DATE)
-    )
+    fun setSelectedMonth(ym: java.time.YearMonth) {
+        _selectedMonth.value = ym
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val _monthEntriesFlow = _selectedMonth.flatMapLatest { ym ->
+        val start = ym.atDay(1).format(DateTimeFormatter.ISO_LOCAL_DATE)
+        val end = ym.atEndOfMonth().format(DateTimeFormatter.ISO_LOCAL_DATE)
+        repo.getEntriesInRange(start, end)
+    }
 
     /**
-     * Single source of truth for the Stats tab.
-     * Combines tasks + live month-entries and computes every metric from scratch.
-     * Emits a new [StatsData] on every entry/task change → guarantees real-time.
+     * Single source of truth for Stats and Month views.
+     * Combines tasks + live month-entries + selectedMonth and computes every metric from scratch.
+     * Emits a new [StatsData] on every entry/task/month change → guarantees real-time.
      */
-    val statsData: StateFlow<StatsData> = combine(tasks, _monthEntriesFlow) { taskList, monthEntries ->
-        computeStatsData(taskList, monthEntries)
+    val statsData: StateFlow<StatsData> = combine(tasks, _monthEntriesFlow, _selectedMonth) { taskList, monthEntries, ym ->
+        computeStatsData(taskList, monthEntries, ym)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StatsData())
 
-    private fun computeStatsData(taskList: List<Task>, monthEntries: List<Entry>): StatsData {
+    private fun computeStatsData(taskList: List<Task>, monthEntries: List<Entry>, ym: java.time.YearMonth): StatsData {
         if (taskList.isEmpty()) return StatsData()
 
         val today = LocalDate.now()
-        val monthStart = today.withDayOfMonth(1)
-        val monthLast  = today.withDayOfMonth(today.lengthOfMonth())
-        val trackUntil = today // don't show future days as 0 %
+        val monthStart = ym.atDay(1)
+        val monthLast  = ym.atEndOfMonth()
+        // If current month, don't penalize future days; for past months, evaluate the entire month!
+        val trackUntil = if (ym == java.time.YearMonth.now()) today else if (ym.isBefore(java.time.YearMonth.now())) monthLast else monthStart.minusDays(1)
 
         // Index entries by date string
         val entriesByDate: Map<String, List<Entry>> = monthEntries.groupBy { it.date }
@@ -161,23 +170,22 @@ class TaskViewModel(application: Application) : AndroidViewModel(application) {
             Triple(titleColor.first, titleColor.second, frac)
         }
 
-        // ── 5. Streak (synchronous, bounded to 365 days) ─────────────────────
+        // ── 5. Streak — computed in-memory instantly from dailyPercents
         var streak = 0
         var sd = today
-        var lookback = 365
-        while (lookback > 0) {
-            val sdStr = sd.format(DateTimeFormatter.ISO_LOCAL_DATE)
+        while (!sd.isBefore(monthStart) && !sd.isAfter(trackUntil)) {
             val scheduled = taskList.filter { isTaskScheduledForDate(it, sd) }
-            if (scheduled.isEmpty()) { sd = sd.minusDays(1); lookback--; continue }
-            // For days outside month we don't have live entries — approximate via dailyPercents
-            val pct = if (!sd.isBefore(monthStart) && !sd.isAfter(trackUntil)) {
-                dailyPercents[sd.dayOfMonth] ?: 0f
+            if (scheduled.isEmpty()) { 
+                sd = sd.minusDays(1)
+                continue 
+            }
+            val pct: Float = dailyPercents[sd.dayOfMonth] ?: 0f
+            if (pct >= 1f) { 
+                streak++
+                sd = sd.minusDays(1)
             } else {
-                // Requires a blocking call — skip for days outside current month window
                 break
             }
-            if (pct >= 1f) { streak++; sd = sd.minusDays(1); lookback-- }
-            else break
         }
 
         // ── 6. Gamification extras ────────────────────────────────────────────
@@ -223,12 +231,22 @@ class TaskViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
+        val totalPoints = monthEntries.sumOf { entry ->
+            val task = taskList.find { it.id == entry.taskId }
+            when (entry.completionState) {
+                CompletionState.COMPLETED -> task?.pointsValue ?: 10
+                CompletionState.PARTIAL -> (task?.pointsValue ?: 10) / 2
+                else -> 0
+            }
+        }
+
         return StatsData(
             dailyPercents = dailyPercents,
             weeklyAvgs = weeklyAvgs,
             overallPercent = overallPercent,
             perTaskCompletion = perTaskCompletion,
             streak = streak,
+            totalPoints = totalPoints,
             perfectDays = perfectDays,
             bestDayOfMonth = bestEntry?.key,
             bestDayPercent = bestEntry?.value ?: 0f,
@@ -274,10 +292,19 @@ class TaskViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private var _currentRangeStart: String? = null
+    private var _currentRangeEnd: String? = null
+    private var _rangeLoadJob: kotlinx.coroutines.Job? = null
     fun loadEntriesForRange(startDate: LocalDate, endDate: LocalDate) {
-        viewModelScope.launch {
-            val start = startDate.format(DateTimeFormatter.ISO_LOCAL_DATE)
-            val end = endDate.format(DateTimeFormatter.ISO_LOCAL_DATE)
+        val start = startDate.format(DateTimeFormatter.ISO_LOCAL_DATE)
+        val end = endDate.format(DateTimeFormatter.ISO_LOCAL_DATE)
+        if (_currentRangeStart == start && _currentRangeEnd == end && _entriesInRange.value.isNotEmpty()) {
+            return
+        }
+        _currentRangeStart = start
+        _currentRangeEnd = end
+        _rangeLoadJob?.cancel()
+        _rangeLoadJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             repo.getEntriesInRange(start, end).collect { entries ->
                 _entriesInRange.value = entries
             }
@@ -328,8 +355,9 @@ class TaskViewModel(application: Application) : AndroidViewModel(application) {
     fun cycleGridState(taskId: String, dateStr: String, currentState: CompletionState) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             val targetDate = LocalDate.parse(dateStr, DateTimeFormatter.ISO_LOCAL_DATE)
-            if (targetDate.isBefore(LocalDate.now().minusDays(7))) {
-                _uiEvent.emit("Cannot edit habits older than 7 days ⏰")
+            // Allow editing any historical date so Month/Grid tabs work fully
+            if (targetDate.isAfter(LocalDate.now())) {
+                _uiEvent.emit("Cannot mark future habits ⏰")
                 return@launch
             }
 
@@ -388,8 +416,8 @@ class TaskViewModel(application: Application) : AndroidViewModel(application) {
     // -- Entry operations --
     fun updateEntryValue(taskId: String, date: LocalDate, columnId: String, value: Any) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            if (date.isBefore(LocalDate.now().minusDays(7))) {
-                _uiEvent.emit("Cannot edit habits older than 7 days ⏰")
+            if (date.isAfter(LocalDate.now())) {
+                _uiEvent.emit("Cannot edit future habits ⏰")
                 return@launch
             }
 
@@ -445,8 +473,8 @@ class TaskViewModel(application: Application) : AndroidViewModel(application) {
 
     fun quickCompleteTask(taskId: String, task: Task, date: LocalDate) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            if (date.isBefore(LocalDate.now().minusDays(7))) {
-                _uiEvent.emit("Cannot edit habits older than 7 days ⏰")
+            if (date.isAfter(LocalDate.now())) {
+                _uiEvent.emit("Cannot mark future habits ⏰")
                 return@launch
             }
 
@@ -491,8 +519,8 @@ class TaskViewModel(application: Application) : AndroidViewModel(application) {
 
     fun savePhotoToEntry(taskId: String, date: LocalDate, absoluteFileName: String) {
         viewModelScope.launch {
-            if (date.isBefore(LocalDate.now().minusDays(7))) {
-                _uiEvent.emit("Cannot edit habits older than 7 days ⏰")
+            if (date.isAfter(LocalDate.now())) {
+                _uiEvent.emit("Cannot add photos to future dates ⏰")
                 return@launch
             }
 
@@ -590,6 +618,44 @@ class TaskViewModel(application: Application) : AndroidViewModel(application) {
             
             sessionsList.removeAll { it["id"]?.jsonPrimitive?.content == sessionId }
             persistSleepSessions(existing, dateStr, sessionsList)
+        }
+    }
+
+    /**
+     * Replaces or registers an automatic sleep session detected from screen inactivity.
+     */
+    fun setAutoSleepSession(date: LocalDate, sleepTime: String, wakeTime: String, durationMinutes: Int) {
+        viewModelScope.launch {
+            val dateStr = date.format(DateTimeFormatter.ISO_LOCAL_DATE)
+            val (existing, sessionsList) = getExistingSleepSessionsJson(dateStr)
+            
+            // Remove previous auto sessions if any, or clear and replace
+            sessionsList.removeAll { it["is_auto"]?.jsonPrimitive?.booleanOrNull == true || it["id"]?.jsonPrimitive?.content == "auto_session" }
+            
+            val newSession = JsonObject(mapOf(
+                "id" to JsonPrimitive("auto_session"),
+                "sleep_time" to JsonPrimitive(sleepTime),
+                "wake_time" to JsonPrimitive(wakeTime),
+                "duration_minutes" to JsonPrimitive(durationMinutes),
+                "is_auto" to JsonPrimitive(true)
+            ))
+            sessionsList.add(newSession)
+            persistSleepSessions(existing, dateStr, sessionsList)
+            _uiEvent.emit("🌙 Auto-synced sleep: $sleepTime → $wakeTime (${durationMinutes / 60}h ${durationMinutes % 60}m)")
+        }
+    }
+
+    /**
+     * Triggers AutoSleepDetector and saves the detected sleep session for today.
+     */
+    fun syncAutoDetectedSleep(date: LocalDate = LocalDate.now()) {
+        viewModelScope.launch {
+            val detected = com.neonroutine.util.AutoSleepDetector.detectSleepForDate(getApplication(), date)
+            if (detected != null) {
+                setAutoSleepSession(date, detected.sleepTime, detected.wakeTime, detected.durationMinutes)
+            } else {
+                _uiEvent.emit("No continuous sleep gap (≥3h) detected on device for $date.")
+            }
         }
     }
 
