@@ -20,4 +20,5 @@ local.properties
 *.keystore
 google-services.json
 *.apk
+!release/NeonRoutine-release.apk
 *.aab

@@ -16,8 +16,9 @@
 
 Directly install the latest production-ready build onto any Android device (Android 8.0+):
 
-👉 **[Download Latest NeonRoutine Release APK](https://github.com/ramaneon/routine/releases/latest/download/NeonRoutine-release.apk)**  
-*(Also available under the [Releases](https://github.com/ramaneon/routine/releases) tab)*
+- 📲 **[Direct Download APK (High-Speed Raw)](https://raw.githubusercontent.com/ramaneon/routine/main/release/NeonRoutine-release.apk)**
+- 📦 **[GitHub Releases Page (All Versions & Notes)](https://github.com/ramaneon/routine/releases)**
+- ⚡ **[Download NeonRoutine-release.apk via Release Asset](https://github.com/ramaneon/routine/releases/latest/download/NeonRoutine-release.apk)**
 
 ---
 
